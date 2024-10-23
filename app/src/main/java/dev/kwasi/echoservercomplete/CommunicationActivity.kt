@@ -8,6 +8,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Bundle
 import android.view.View
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -25,6 +26,7 @@ import dev.kwasi.echoservercomplete.peerlist.PeerListAdapter
 import dev.kwasi.echoservercomplete.peerlist.PeerListAdapterInterface
 import dev.kwasi.echoservercomplete.wifidirect.WifiDirectInterface
 import dev.kwasi.echoservercomplete.wifidirect.WifiDirectManager
+import dev.kwasi.echoservercomplete.devicelist.DeviceListAdapter
 
 class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerListAdapterInterface, NetworkMessageInterface {
     private var wfdManager: WifiDirectManager? = null
@@ -36,12 +38,18 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
         addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
     }
 
+     object LecturerData {
+        val validStudentIDRange: IntRange = 816000000..816999999
+    }
+     
     private var peerListAdapter:PeerListAdapter? = null
     private var chatListAdapter:ChatListAdapter? = null
+    private var deviceListAdapter:DeviceListAdapter? = null
 
     private var wfdAdapterEnabled = false
     private var wfdHasConnection = false
     private var hasDevices = false
+    private var hasConnectedDevices = false
     private var server: Server? = null
     private var client: Client? = null
     private var deviceIp: String = ""
@@ -60,10 +68,10 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
         val channel = manager.initialize(this, mainLooper, null)
         wfdManager = WifiDirectManager(manager, channel, this)
 
-        peerListAdapter = PeerListAdapter(this)
-        val rvPeerList: RecyclerView= findViewById(R.id.rvPeerListing)
-        rvPeerList.adapter = peerListAdapter
-        rvPeerList.layoutManager = LinearLayoutManager(this)
+        deviceListAdapter = DeviceListAdapter()
+        val deviceList: RecyclerView = findViewById(R.id.deviceList)
+        deviceList.adapter = deviceListAdapter
+        deviceList.layoutManager = LinearLayoutManager(this)
 
         chatListAdapter = ChatListAdapter()
         val rvChatList: RecyclerView = findViewById(R.id.rvChat)
@@ -84,6 +92,7 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
             unregisterReceiver(it)
         }
     }
+
     fun createGroup(view: View) {
         wfdManager?.createGroup()
     }
@@ -93,22 +102,11 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
     }
 
     private fun updateUI(){
-        //The rules for updating the UI are as follows:
-        // IF the WFD adapter is NOT enabled then
-        //      Show UI that says turn on the wifi adapter
-        // ELSE IF there is NO WFD connection then i need to show a view that allows the user to either
-            // 1) create a group with them as the group owner OR
-            // 2) discover nearby groups
-        // ELSE IF there are nearby groups found, i need to show them in a list
-        // ELSE IF i have a WFD connection i need to show a chat interface where i can send/receive messages
         val wfdAdapterErrorView:ConstraintLayout = findViewById(R.id.clWfdAdapterDisabled)
         wfdAdapterErrorView.visibility = if (!wfdAdapterEnabled) View.VISIBLE else View.GONE
 
         val wfdNoConnectionView:ConstraintLayout = findViewById(R.id.clNoWifiDirectConnection)
         wfdNoConnectionView.visibility = if (wfdAdapterEnabled && !wfdHasConnection) View.VISIBLE else View.GONE
-
-        val rvPeerList: RecyclerView= findViewById(R.id.rvPeerListing)
-        rvPeerList.visibility = if (wfdAdapterEnabled && !wfdHasConnection && hasDevices) View.VISIBLE else View.GONE
 
         val wfdConnectedView:ConstraintLayout = findViewById(R.id.clHasConnection)
         wfdConnectedView.visibility = if(wfdHasConnection)View.VISIBLE else View.GONE
@@ -118,10 +116,10 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
         val etMessage:EditText = findViewById(R.id.etMessage)
         val etString = etMessage.text.toString()
         val content = ContentModel(etString, deviceIp)
+        val copyContent = ContentModel(content.message, content.senderIp)
         etMessage.text.clear()
-        client?.sendMessage(content)
-        chatListAdapter?.addItemToEnd(content)
-
+        server?.sendMessage(content)
+        chatListAdapter?.addItemToEnd(copyContent)
     }
 
     override fun onWiFiDirectStateChanged(isEnabled: Boolean) {
@@ -166,6 +164,12 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
             client = Client(this)
             deviceIp = client!!.ip
         }
+
+        if(groupInfo != null) {
+            setNetworkDetails(groupInfo.networkName, groupInfo.passphrase)
+            updateConnectedDevicesList(groupInfo.clientList)
+        }
+        updateUI()
     }
 
     override fun onDeviceStatusChanged(thisDevice: WifiP2pDevice) {
@@ -177,11 +181,28 @@ class CommunicationActivity : AppCompatActivity(), WifiDirectInterface, PeerList
         wfdManager?.connectToPeer(peer)
     }
 
-
     override fun onContent(content: ContentModel) {
         runOnUiThread{
             chatListAdapter?.addItemToEnd(content)
         }
     }
+    private fun setNetworkDetails(networkName: String, passphrase: String) {
+        var nameView: TextView = findViewById(R.id.networkSSID)
+        var passView: TextView = findViewById(R.id.password)
+        nameView.setText("Class Network: $networkName")
+        passView.setText("Password: $passphrase")
+    }
 
+    fun disconnect(view: View) {
+        wfdManager?.disconnect()
+        wfdHasConnection = false
+        Toast.makeText(this, "Group Removed", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateConnectedDevicesList(connectedDevices: Collection<WifiP2pDevice>) {
+        hasConnectedDevices = connectedDevices.isNotEmpty()
+        deviceListAdapter?.updateConnectedDevices(connectedDevices)
+        updateUI()
+    }
 }
+
